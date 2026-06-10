@@ -1,0 +1,136 @@
+diff --git a/PAI/PULSE/Performance/cost-aggregator.ts b/PAI/PULSE/Performance/cost-aggregator.ts
+index 6df449c..05417b0 100755
+--- a/PAI/PULSE/Performance/cost-aggregator.ts
++++ b/PAI/PULSE/Performance/cost-aggregator.ts
+@@ -105,6 +105,7 @@ interface SessionCostLine {
+ // Map codeburn display model names back to canonical Anthropic / vendor IDs
+ // so module.ts's per-model rollup keeps the same keys as before.
+ const MODEL_NAME_MAP: Record<string, string> = {
++  "Fable 5": "claude-fable-5",
+   "Opus 4.7": "claude-opus-4-7",
+   "Opus 4.6": "claude-opus-4-6",
+   "Opus 4": "claude-opus-4-20250514",
+@@ -120,6 +121,28 @@ function canonicalModel(display: string): string {
+   return MODEL_NAME_MAP[display] ?? display
+ }
+ 
++// Per-million-token relative weights per model family. These ratios only SPLIT
++// codeburn's per-session total cost into the four component buckets the Pulse
++// UI sums — the absolute pricing still comes from codeburn → LiteLLM. Values are
++// current Anthropic public $/MTok (input/output): Fable 5 = 10/50, Opus 4.x =
++// 5/25, Sonnet 4.6 = 3/15, Haiku 4.5 = 1/5; cacheWrite = 1.25 × input,
++// cacheRead = 0.1 × input. Non-Anthropic models (e.g. GPT-5.x) fall to opus.
++const FAMILY_WEIGHTS: Record<string, { input: number; output: number; cacheWrite: number; cacheRead: number }> = {
++  fable: { input: 10, output: 50, cacheWrite: 12.5, cacheRead: 1 },
++  opus: { input: 5, output: 25, cacheWrite: 6.25, cacheRead: 0.5 },
++  sonnet: { input: 3, output: 15, cacheWrite: 3.75, cacheRead: 0.3 },
++  haiku: { input: 1, output: 5, cacheWrite: 1.25, cacheRead: 0.1 },
++}
++const DEFAULT_WEIGHTS = FAMILY_WEIGHTS.opus
++
++function weightsFor(model: string) {
++  const m = model.toLowerCase()
++  for (const family of Object.keys(FAMILY_WEIGHTS)) {
++    if (m.includes(family)) return FAMILY_WEIGHTS[family]
++  }
++  return DEFAULT_WEIGHTS
++}
++
+ // Pulse uses ~/.claude/projects/<sanitized> dir names where every `/` and `.`
+ // in the absolute path becomes `-`. Mirror that so groupings stay stable.
+ function encodeProjectPath(absPath: string): string {
+@@ -128,20 +151,32 @@ function encodeProjectPath(absPath: string): string {
+ 
+ // codeburn's session list doesn't carry per-session model attribution — only
+ // total cost. To populate primaryModel correctly (so module.ts's byModel
+-// rollup shows accurate per-model spend), peek at the first 4KB of the
+-// session JSONL and grab the first `"model":"..."` token. Falls back to
++// rollup shows accurate per-model spend), scan the head of the session JSONL
++// in 64KB chunks (1MB cap — large first records push the first `"model":"..."`
++// token past any fixed small window) and grab the first match. Falls back to
+ // caller-provided default on any error.
+ function resolveSessionModel(sessionId: string, projectDir: string, fallback: string): string {
+   const filePath = join(PROJECTS_DIR, projectDir, `${sessionId}.jsonl`)
+   if (!existsSync(filePath)) return fallback
+   try {
+     const fd = openSync(filePath, "r")
+-    const buf = Buffer.alloc(4096)
+-    const bytesRead = readSync(fd, buf, 0, 4096, 0)
+-    closeSync(fd)
+-    const text = buf.subarray(0, bytesRead).toString("utf-8")
+-    const match = text.match(/"model"\s*:\s*"([^"]+)"/)
+-    return match && match[1] !== "<synthetic>" ? match[1] : fallback
++    const chunk = Buffer.alloc(65536)
++    let carry = ""
++    let offset = 0
++    try {
++      while (offset < 1048576) {
++        const bytesRead = readSync(fd, chunk, 0, chunk.length, offset)
++        if (bytesRead <= 0) break
++        const text = carry + chunk.subarray(0, bytesRead).toString("utf-8")
++        const match = text.match(/"model"\s*:\s*"([^"]+)"/)
++        if (match) return match[1] !== "<synthetic>" ? match[1] : fallback
++        carry = text.slice(-64)
++        offset += bytesRead
++      }
++    } finally {
++      closeSync(fd)
++    }
++    return fallback
+   } catch {
+     return fallback
+   }
+@@ -169,10 +204,10 @@ interface ComponentShares {
+ }
+ 
+ // Build period-level component cost shares from the model rollup. We weight
+-// each component's token count by Anthropic's public per-million-token price
+-// ratios (Opus tier — the dominant model in this user's mix). The absolute
+-// pricing comes from codeburn → LiteLLM; we only use these ratios to SPLIT
+-// codeburn's per-session total into the four buckets the Pulse UI sums.
++// each model row's token counts by its own family's per-million-token price
++// ratios (FAMILY_WEIGHTS), so a mixed-model period splits correctly. The
++// absolute pricing comes from codeburn → LiteLLM; we only use these ratios to
++// SPLIT codeburn's per-session total into the four buckets the Pulse UI sums.
+ function buildShares(period: CodeburnPeriod): ComponentShares {
+   const totIn = period.models.reduce((a, m) => a + (m["Input Tokens"] ?? 0), 0)
+   const totOut = period.models.reduce((a, m) => a + (m["Output Tokens"] ?? 0), 0)
+@@ -180,14 +215,19 @@ function buildShares(period: CodeburnPeriod): ComponentShares {
+   const totCR = period.models.reduce((a, m) => a + (m["Cache Read Tokens"] ?? 0), 0)
+   const totCost = period.models.reduce((a, m) => a + (m["Cost (USD)"] ?? 0), 0)
+ 
+-  // Per-million-token relative weights (Opus pricing — broadly correct for
+-  // splitting a session's total cost into component buckets when ≥90% of
+-  // spend is Opus, which the codeburn snapshot confirms today).
+-  const w = { input: 15, output: 75, cacheWrite: 18.75, cacheRead: 1.5 }
+-  const wIn = totIn * w.input
+-  const wOut = totOut * w.output
+-  const wCW = totCW * w.cacheWrite
+-  const wCR = totCR * w.cacheRead
++  // Weight each model row's tokens by its own family's per-million-token price
++  // ratios, so a mixed-model period splits correctly instead of assuming Opus.
++  let wIn = 0
++  let wOut = 0
++  let wCW = 0
++  let wCR = 0
++  for (const m of period.models) {
++    const w = weightsFor(m.Model)
++    wIn += (m["Input Tokens"] ?? 0) * w.input
++    wOut += (m["Output Tokens"] ?? 0) * w.output
++    wCW += (m["Cache Write Tokens"] ?? 0) * w.cacheWrite
++    wCR += (m["Cache Read Tokens"] ?? 0) * w.cacheRead
++  }
+   const wTotal = wIn + wOut + wCW + wCR || 1
+ 
+   return {
+@@ -279,7 +319,9 @@ async function main() {
+   // Run codeburn. `bunx` resolves from cache after the first run (~50ms);
+   // first-ever invocation downloads ~5MB and takes ~5s.
+   try {
+-    execSync(`bunx codeburn export --format json --output ${TMP_FILE}`, {
++    // Pinned: aggregator is a cron surface — a bad upstream @latest publish
++    // would break cost aggregation silently. Bump deliberately.
++    execSync(`bunx codeburn@0.9.12 export --format json --output ${TMP_FILE}`, {
+       stdio: ["ignore", "pipe", "pipe"],
+       timeout: 120_000,
+     })

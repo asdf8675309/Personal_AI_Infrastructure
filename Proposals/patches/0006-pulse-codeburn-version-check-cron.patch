@@ -1,0 +1,79 @@
+diff --git a/PAI/PULSE/PULSE.toml b/PAI/PULSE/PULSE.toml
+index d1668ba..60cf708 100755
+--- a/PAI/PULSE/PULSE.toml
++++ b/PAI/PULSE/PULSE.toml
+@@ -58,6 +58,14 @@ command = "bun run Performance/cost-aggregator.ts"
+ output = "log"
+ enabled = true
+ 
++[[job]]
++name = "codeburn-version-check"
++schedule = "23 9 * * 1"
++type = "script"
++command = "bun run Performance/codeburn-version-check.ts"
++output = "log"
++enabled = true
++
+ [[job]]
+ name = "healthcheck"
+ schedule = "*/5 * * * *"
+diff --git a/PAI/PULSE/Performance/codeburn-version-check.ts b/PAI/PULSE/Performance/codeburn-version-check.ts
+new file mode 100644
+index 0000000..cda74d0
+--- /dev/null
++++ b/PAI/PULSE/Performance/codeburn-version-check.ts
+@@ -0,0 +1,54 @@
++/**
++ * codeburn-version-check — weekly Pulse cron job.
++ *
++ * Reads the codeburn version pinned in cost-aggregator.ts, compares it to
++ * npm latest, and notifies via Pulse only on drift. The update decision stays
++ * human: review release notes, bump the pin, run the aggregator once, confirm
++ * schema=codeburn.export.v2 still parses.
++ *
++ * Test the drift path without waiting on npm: --simulate-latest 9.9.9
++ */
++import { readFileSync } from "fs"
++import { join, dirname } from "path"
++import { fileURLToPath } from "url"
++
++const HERE = dirname(fileURLToPath(import.meta.url))
++
++const src = readFileSync(join(HERE, "cost-aggregator.ts"), "utf-8")
++const pinned = src.match(/codeburn@(\d+\.\d+\.\d+)/)?.[1]
++if (!pinned) {
++  console.error("codeburn-version-check: no codeburn@x.y.z pin found in cost-aggregator.ts")
++  process.exit(1)
++}
++
++const simIdx = process.argv.indexOf("--simulate-latest")
++let latest: string
++if (simIdx !== -1 && process.argv[simIdx + 1]) {
++  latest = process.argv[simIdx + 1]
++} else {
++  const res = await fetch("https://registry.npmjs.org/codeburn/latest", { signal: AbortSignal.timeout(10_000) })
++  if (!res.ok) {
++    console.error(`codeburn-version-check: npm registry returned ${res.status}`)
++    process.exit(1)
++  }
++  latest = ((await res.json()) as { version: string }).version
++}
++
++if (latest === pinned) {
++  console.log(`codeburn-version-check: pinned ${pinned} is latest — no action`)
++  process.exit(0)
++}
++
++console.log(`codeburn-version-check: drift — pinned ${pinned}, npm latest ${latest}`)
++try {
++  await fetch("http://localhost:31337/notify", {
++    method: "POST",
++    signal: AbortSignal.timeout(10_000),
++    headers: { "Content-Type": "application/json" },
++    body: JSON.stringify({
++      message: `codeburn ${latest} is available — the cost aggregator is pinned at ${pinned}. Review release notes and bump the pin when ready.`,
++    }),
++  })
++} catch {
++  console.error("codeburn-version-check: drift detected but Pulse notify unreachable")
++}

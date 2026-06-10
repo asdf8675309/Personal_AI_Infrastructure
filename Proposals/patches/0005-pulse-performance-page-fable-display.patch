@@ -1,0 +1,12 @@
+diff --git a/PAI/PULSE/Observability/src/app/performance/page.tsx b/PAI/PULSE/Observability/src/app/performance/page.tsx
+index 9016c18..42cc658 100755
+--- a/PAI/PULSE/Observability/src/app/performance/page.tsx
++++ b/PAI/PULSE/Observability/src/app/performance/page.tsx
+@@ -134,6 +134,7 @@ function formatTokens(n: number): string {
+ }
+ 
+ function shortModel(m: string): string {
++  if (m.includes("fable")) return "Fable";
+   if (m.includes("opus")) return "Opus";
+   if (m.includes("haiku")) return "Haiku";
+   if (m.includes("sonnet")) return "Sonnet";
