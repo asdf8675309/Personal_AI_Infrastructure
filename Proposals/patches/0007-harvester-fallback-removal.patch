@@ -1,0 +1,34 @@
+--- Releases/v5.0.0/.claude/PAI/TOOLS/KnowledgeHarvester.ts	2026-05-04 09:50:31
++++ Releases/v5.0.0/.claude/PAI/TOOLS/KnowledgeHarvester.ts	2026-06-10 21:20:29
+@@ -193,24 +193,13 @@
+       continue; // Explicit flags found — don't also scan Decisions/Verification
+     }
+ 
+-    // No explicit flags — apply sentiment filter before falling back to section scanning
+-    const sentiment = getSentimentForSession(dir);
+-    if (sentiment !== null && sentiment < 7) continue;
+-
+-    // Fallback: extract Decisions/Verification sections (pre-v3.16.0 ISAs)
+-    const decisions = extractSection(content, "Decisions");
+-    const verification = extractSection(content, "Verification");
+-    if (!decisions && !verification) continue; // Nothing worth archiving
+-
+-    const domain = classifyDomain(content, frontmatter);
+-    candidates.push({
+-      sourcePath: isaPath,
+-      title: frontmatter.task || dir,
+-      content: [decisions, verification].filter(Boolean).join("\n\n"),
+-      domain,
+-      type: "idea",
+-      tags: extractTags(content),
+-    });
++    // No explicit Knowledge section — skip. Decisions and Verification are session
++    // metadata, not domain knowledge. Algorithm LEARN phase is the canonical source
++    // of harvest signals via the `## Knowledge` section with `- NEW`/`- UPDATED`
++    // lines. Pre-v3.16.0 ISAs that warrant retro-harvest can be hand-edited to add
++    // a Knowledge section. Fallback path removed 2026-05-16 (PROJECTS.md
++    // `harvester-fallback-noise`) — was producing junk seedlings classifying
++    // session decision logs as Person/Idea notes.
+   }
+   return candidates;
+ }

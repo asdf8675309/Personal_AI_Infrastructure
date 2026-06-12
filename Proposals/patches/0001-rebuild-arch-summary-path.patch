@@ -1,0 +1,11 @@
+--- Releases/v5.0.0/.claude/hooks/handlers/RebuildArchSummary.ts	2026-05-04 09:50:31
++++ Releases/v5.0.0/.claude/hooks/handlers/RebuildArchSummary.ts	2026-05-12 08:29:25
+@@ -24,7 +24,7 @@
+ export async function handleRebuildArchSummary(): Promise<void> {
+   const paiDir = getPaiDir();
+   const claudeDir = getClaudeDir();
+-  const output = join(paiDir, "DOCUMENTATION", "PAI_ARCHITECTURE_SUMMARY.md");
++  const output = join(paiDir, "DOCUMENTATION", "ARCHITECTURE_SUMMARY.md");
+   const generator = join(paiDir, "Tools/ArchitectureSummaryGenerator.ts");
+ 
+   if (!existsSync(generator)) return;

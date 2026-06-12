@@ -1,0 +1,130 @@
+--- Releases/v5.0.0/.claude/PAI/statusline-command.sh
++++ Releases/v5.0.0/.claude/PAI/statusline-command.sh
+@@ -444,15 +444,22 @@
+     term_width=80
+ fi
+ 
+-if [ "$term_width" -lt 35 ]; then
+-    MODE="nano"
+-elif [ "$term_width" -lt 55 ]; then
+-    MODE="micro"
+-elif [ "$term_width" -lt 80 ]; then
+-    MODE="mini"
+-else
+-    MODE="normal"
+-fi
++case "${PAI_STATUSLINE_MODE:-}" in
++    nano|micro|mini|normal|single)
++        MODE="$PAI_STATUSLINE_MODE"
++        ;;
++    *)
++        if [ "$term_width" -lt 35 ]; then
++            MODE="nano"
++        elif [ "$term_width" -lt 55 ]; then
++            MODE="micro"
++        elif [ "$term_width" -lt 80 ]; then
++            MODE="mini"
++        else
++            MODE="normal"
++        fi
++        ;;
++esac
+ 
+ # Content width: cap at 72 so wide terminals don't stretch, but narrow ones fit
+ content_width=$term_width
+@@ -525,7 +532,7 @@
+     fi
+ } &
+ 
+-if [ "$MODE" = "mini" ] || [ "$MODE" = "normal" ]; then
++if [ "$MODE" = "mini" ] || [ "$MODE" = "normal" ] || [ "$MODE" = "single" ]; then
+ {
+     # 2. Location fetch (with caching)
+     cache_age=999999
+@@ -570,7 +577,7 @@
+ } &
+ fi
+ 
+-if [ "$MODE" = "mini" ] || [ "$MODE" = "normal" ]; then
++if [ "$MODE" = "mini" ] || [ "$MODE" = "normal" ] || [ "$MODE" = "single" ]; then
+ {
+     # 3. Weather fetch (with caching)
+     cache_age=999999
+@@ -663,7 +670,7 @@
+ } &
+ fi
+ 
+-if [ "$MODE" = "normal" ]; then
++if [ "$MODE" = "normal" ] || [ "$MODE" = "single" ]; then
+ {
+     # 5. Usage data — prefer native rate_limits from statusline JSON input (v2.1.80+),
+     #    fall back to OAuth API fetch. Native field eliminates 429 risk entirely.
+@@ -736,7 +743,7 @@
+ } &
+ fi
+ 
+-if [ "$MODE" = "normal" ]; then
++if [ "$MODE" = "normal" ] || [ "$MODE" = "single" ]; then
+ {
+     # 6. Quote prefetch (was serial at the end — now parallel)
+     # Refresh every 60s. Keyed ZenQuotes is effectively unlimited; keyless endpoint
+@@ -770,7 +777,7 @@
+ 
+ # Supplement missing reset timestamps from OAuth cache when native rate_limits
+ # omits resets_at (happens in some Claude Code sessions)
+-if [ "$MODE" = "normal" ] && { [ -z "${usage_5h_reset:-}" ] || [ -z "${usage_7d_reset:-}" ]; } && [ -f "$USAGE_CACHE" ]; then
++if { [ "$MODE" = "normal" ] || [ "$MODE" = "single" ]; } && { [ -z "${usage_5h_reset:-}" ] || [ -z "${usage_7d_reset:-}" ]; } && [ -f "$USAGE_CACHE" ]; then
+     eval "$(jq -r '
+         "_cache_usage_5h_reset=" + (.five_hour.resets_at // "" | @sh) + "\n" +
+         "_cache_usage_7d_reset=" + (.seven_day.resets_at // "" | @sh)
+@@ -1111,6 +1118,50 @@
+             printf "${LEARN_PRIMARY}◎${RESET} ${LEARN_WORK}📁${RESET}${SLATE_300}${work_count}${RESET} ${LEARN_SIGNALS}✦${RESET}${SLATE_300}${ratings_count}${RESET} ${SLATE_600}│${RESET} ${LEARN_LABEL}✿${RESET}${_learn_color}${_learn_score}${_learn_trend}${RESET}
+ "
+             ;;
++        single)
++            printf "${PAI_P}P${PAI_A}A${PAI_I}I${RESET}"
++            printf " ${SLATE_600}│${RESET} "
++            if [ -n "${location_city:-}" ]; then
++                [ -n "${location_flag:-}" ] && printf "${location_flag} "
++                printf "${PAI_CITY}${location_city}${RESET}"
++                [ -n "${location_state:-}" ] && printf "${SLATE_600}, ${RESET}${PAI_STATE}${location_state}${RESET}"
++                printf "  "
++            fi
++            printf "${PAI_TIME}${current_time}${RESET}"
++            [ -n "${weather_str:-}" ] && printf "  ${PAI_WEATHER}${weather_str}${RESET}"
++            printf " ${SLATE_600}│${RESET} ${SLATE_400}CC:${RESET}${PAI_A}${cc_version}${RESET} ${SLATE_500}PAI:${PAI_A}${PAI_VERSION}${RESET} ${SLATE_400}ALG:${PAI_A}${ALGO_VERSION}${RESET}"
++            printf " ${SLATE_600}│${RESET} ${CTX_SECONDARY}CTX:${RESET}${_pct_color}${_raw_pct}%%${RESET}"
++            usage_5h_int=${usage_5h%%.*}
++            usage_7d_int=${usage_7d%%.*}
++            [ -z "$usage_5h_int" ] && usage_5h_int=0
++            [ -z "$usage_7d_int" ] && usage_7d_int=0
++            if [ "${usage_no_data:-false}" != "true" ] && { [ "$usage_5h_int" -gt 0 ] || [ "$usage_7d_int" -gt 0 ] || [ -f "$USAGE_CACHE" ]; }; then
++                u5_color=$(get_usage_color "$usage_5h_int")
++                u7_color=$(get_usage_color "$usage_7d_int")
++                printf " ${SLATE_600}│${RESET} ${USAGE_LABEL}5HR:${RESET}${u5_color}${usage_5h_int}%%${RESET} ${USAGE_LABEL}WK:${RESET}${u7_color}${usage_7d_int}%%${RESET}"
++            fi
++            src_tag="IMP"
++            [ "${latest_source:-}" = "explicit" ] && src_tag="EXP"
++            printf " ${SLATE_600}│${RESET} ${LEARN_LABEL}LEARN:${RESET}${_learn_color}${_learn_score}${_learn_trend}${RESET}${SLATE_500}${src_tag}${RESET}"
++            if [ -n "${hour_avg:-}" ]; then
++                HOUR60_color=$(get_rating_color "${hour_avg:-5}")
++                printf " ${SIGNAL_PERIOD}60m:${RESET}${HOUR60_color}${hour_avg}${RESET}"
++            fi
++            if [ -f "$QUOTE_CACHE" ]; then
++                IFS='|' read -r quote_text quote_author < "$QUOTE_CACHE"
++                quote_text_trunc="$quote_text"
++                _qmax=$((term_width / 3))
++                [ "$_qmax" -lt 20 ] && _qmax=20
++                if [ "${#quote_text_trunc}" -gt "$_qmax" ]; then
++                    quote_text_trunc="${quote_text:0:_qmax}"
++                    quote_text_trunc="${quote_text_trunc% *}"
++                    [ -z "$quote_text_trunc" ] && quote_text_trunc="${quote_text:0:_qmax}"
++                    quote_text_trunc="${quote_text_trunc}…"
++                fi
++                printf " ${SLATE_600}│${RESET} ${SLATE_400}\"${quote_text_trunc}\"${RESET} ${QUOTE_AUTHOR}—${quote_author}${RESET}"
++            fi
++            printf "\n"
++            ;;
+     esac
+     exit 0
+ fi
