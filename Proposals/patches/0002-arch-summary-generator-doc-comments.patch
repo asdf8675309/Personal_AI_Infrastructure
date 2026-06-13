@@ -1,0 +1,19 @@
+--- Releases/v5.0.0/.claude/PAI/TOOLS/ArchitectureSummaryGenerator.ts	2026-05-04 09:50:31
++++ Releases/v5.0.0/.claude/PAI/TOOLS/ArchitectureSummaryGenerator.ts	2026-05-12 08:30:24
+@@ -1,6 +1,6 @@
+ #!/usr/bin/env bun
+ /**
+- * ArchitectureSummaryGenerator — Generate PAI_ARCHITECTURE_SUMMARY.md from source docs
++ * ArchitectureSummaryGenerator — Generate ARCHITECTURE_SUMMARY.md from source docs
+  *
+  * Commands:
+  *   generate    Generate/regenerate the architecture summary
+@@ -378,7 +378,7 @@
+     console.log(`Usage: bun ArchitectureSummaryGenerator.ts <command>
+ 
+ Commands:
+-  generate    Generate/regenerate PAI_ARCHITECTURE_SUMMARY.md
++  generate    Generate/regenerate ARCHITECTURE_SUMMARY.md
+   check       Check if summary is stale (exit 1 if stale)`);
+     process.exit(command ? 1 : 0);
+ }

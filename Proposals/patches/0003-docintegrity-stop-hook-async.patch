@@ -1,0 +1,22 @@
+--- Releases/v5.0.0/.claude/settings.json
++++ Releases/v5.0.0/.claude/settings.json
+@@ -352,7 +352,9 @@
+           },
+           {
+             "type": "command",
+-            "command": "$HOME/.claude/hooks/DocIntegrity.hook.ts"
++            "command": "$HOME/.claude/hooks/DocIntegrity.hook.ts",
++            "timeout": 30,
++            "async": true
+           }
+         ]
+       }
+@@ -1139,7 +1141,7 @@
+       "LoadContext.hook.ts injects dynamic context (relationship, learning, work) at session start.",
+       "v5.0 skills: 48 public and 42 private skill directories. Self-activating, composable.",
+       "Private skills prefixed with _ (e.g., _COMMS, _FEED) are excluded from public PAI releases.",
+-      "DocIntegrity.hook.ts keeps documentation cross-references current and regenerates PAI_ARCHITECTURE_SUMMARY.md on Stop.",
++      "DocIntegrity.hook.ts keeps documentation cross-references current and regenerates ARCHITECTURE_SUMMARY.md on Stop (async, non-blocking).",
+       "SkillGuard and AgentGuard active via Pulse HTTP routes on pai:31337.",
+       "v5.0 eliminated packs. The release IS the .claude/ directory — install by copying directly.",
+       "PRD frontmatter has 8 fields: task, slug, effort, phase, progress, mode, started, updated.",
