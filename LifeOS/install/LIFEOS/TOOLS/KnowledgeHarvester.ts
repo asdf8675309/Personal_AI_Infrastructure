@@ -101,7 +101,6 @@ function getWorkRoots(): Array<{ dir: string; project: string | null }> {
 
 const HARVEST_STATE_FILE = path.join(KNOWLEDGE_DIR, ".harvest-state.json");
 const REFLECTIONS_FILE = path.join(LEARNING_DIR, "REFLECTIONS", "algorithm-reflections.jsonl");
-const RATINGS_FILE = path.join(LEARNING_DIR, "SIGNALS", "ratings.jsonl");
 
 const MAX_NOTES_PER_HARVEST_DEFAULT = 5;
 const MAX_NOTES_BACKFILL = 50;
@@ -241,8 +240,8 @@ function scanWorkRoot(workRoot: string, project: string | null, state: HarvestSt
     // Quality filter: only harvest completed work
     if (frontmatter.phase !== "complete" && frontmatter.phase !== "learn") continue;
 
-    // Check for explicit knowledge flags (legacy v3.16.0 ISAs — v3.17.0+ writes directly to KNOWLEDGE/)
-    // Explicit flags bypass sentiment filtering — the Algorithm already decided this is worth archiving
+    // Harvest only ISAs carrying an explicit `## Knowledge` section written by the
+    // Algorithm LEARN phase (legacy v3.16.0 ISAs — v3.17.0+ writes directly to KNOWLEDGE/).
     const knowledgeSection = extractSection(content, "Knowledge");
     if (knowledgeSection && !knowledgeSection.includes("SKIP")) {
       // Parse explicit flags: "- NEW technology/slug — description" or "- UPDATED domain/slug — description"
@@ -265,28 +264,9 @@ function scanWorkRoot(workRoot: string, project: string | null, state: HarvestSt
           });
         }
       }
-      continue; // Explicit flags found — don't also scan Decisions/Verification
     }
-
-    // No explicit flags — apply sentiment filter before falling back to section scanning
-    const sentiment = getSentimentForSession(dir);
-    if (sentiment !== null && sentiment < 7) continue;
-
-    // Fallback: extract Decisions/Verification sections (pre-v3.16.0 ISAs)
-    const decisions = extractSection(content, "Decisions");
-    const verification = extractSection(content, "Verification");
-    if (!decisions && !verification) continue; // Nothing worth archiving
-
-    const domain = classifyDomain(content, frontmatter);
-    candidates.push({
-      sourcePath: isaPath,
-      title: frontmatter.task || dir,
-      content: [decisions, verification].filter(Boolean).join("\n\n"),
-      domain,
-      type: "idea",
-      tags: extractTags(content),
-      sourceProject: project ?? undefined,
-    });
+    // ISAs without an explicit `## Knowledge` section are skipped: Decisions and
+    // Verification are session metadata, not harvest-worthy domain knowledge.
   }
   return candidates;
 }
@@ -456,43 +436,6 @@ function extractSection(content: string, heading: string): string | null {
   const regex = new RegExp(`## ${heading}\\s*\\n([\\s\\S]*?)(?=\\n## |$)`, "i");
   const match = content.match(regex);
   return match ? match[1].trim() : null;
-}
-
-function getSentimentForSession(dirName: string): number | null {
-  if (!fs.existsSync(RATINGS_FILE)) return null;
-  // Extract timestamp from dir name: YYYYMMDD-HHMMSS_description
-  // Match by session_id if available in ISA, otherwise by hour-level timestamp
-  const dateTimePrefix = dirName.substring(0, 15); // YYYYMMDD-HHMMSS
-  const dateFormatted = dateTimePrefix.replace(
-    /(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/,
-    "$1-$2-$3T$4:$5"
-  ); // "2026-04-01T22:30"
-  const dateOnly = dateTimePrefix.substring(0, 8).replace(
-    /(\d{4})(\d{2})(\d{2})/,
-    "$1-$2-$3"
-  ); // "2026-04-01"
-  try {
-    const lines = fs.readFileSync(RATINGS_FILE, "utf-8").trim().split("\n");
-    // Check last 50 ratings — prefer minute-level match, fall back to averaging same-day
-    const sameDayRatings: number[] = [];
-    for (const line of lines.slice(-50).reverse()) {
-      try {
-        const entry = JSON.parse(line);
-        const ts = entry.timestamp || "";
-        const rating = entry.rating || entry.implied_sentiment;
-        if (!rating) continue;
-        // Minute-level match: most precise
-        if (ts.includes(dateFormatted)) return rating;
-        // Collect same-day ratings for averaging
-        if (ts.includes(dateOnly)) sameDayRatings.push(rating);
-      } catch { /* skip */ }
-    }
-    // No minute-level match — average same-day ratings instead of taking the worst one
-    if (sameDayRatings.length > 0) {
-      return Math.round(sameDayRatings.reduce((a, b) => a + b, 0) / sameDayRatings.length);
-    }
-  } catch { /* file read error */ }
-  return null; // No rating found — allow harvest (don't filter)
 }
 
 function toKebabCase(str: string): string {
