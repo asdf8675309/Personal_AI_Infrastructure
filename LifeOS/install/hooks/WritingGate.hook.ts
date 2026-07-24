@@ -164,10 +164,16 @@ export async function run(input: NonNullable<Awaited<ReturnType<typeof readHookI
   if (!message || message.trim().length === 0) return null;
 
   const fenceStripped = message.replace(/```[\s\S]*?```/g, " ").trimStart();
+  // Teeth (block + re-emit) fire only on UNAMBIGUOUS publication shapes: a
+  // disclosure caption on its own line, a hashtag cluster, or a response opening
+  // with blog frontmatter. DELIVER_LABEL ("here's the post/draft/…") is ambiguous —
+  // it also matches ordinary technical prose (PR bodies, code docs) — so it is a
+  // WEAK (telemetry-only) signal, not teeth. A genuinely published post still trips
+  // the teeth via its disclosure line or hashtags.
   const strong =
     DISCLOSURE_CAPTION.test(message) || HASHTAG_CLUSTER.test(message) ||
-    DELIVER_LABEL.test(message) || BLOG_FRONTMATTER.test(fenceStripped);
-  const weak = strong || WEAK_SIGNALS.some((p) => p.test(message));
+    BLOG_FRONTMATTER.test(fenceStripped);
+  const weak = strong || DELIVER_LABEL.test(message) || WEAK_SIGNALS.some((p) => p.test(message));
   const words = proseWordCount(message);
 
   if (strong && words >= 40) {
