@@ -186,9 +186,11 @@ User-specific preferences, project names, domain lists, and war stories go in `~
 
 ### Pre-Flight Check
 
-Before finalizing, grep the skill for personal refs:
+Before finalizing, grep the skill for personal refs. Personal identifiers are
+per-install — substitute your own name, org, products, and domains for the
+placeholders (same pattern as `SKILL.md` § Pre-Flight Grep):
 ```bash
-rg -i "danielmiessler|unsupervised|ULAdmin|thesurface|human3|ul\.live|/Users/[a-z]+/" ~/.claude/skills/[SkillName]/
+rg -i "<your-name>|<your-org>|<your-product>|<your-domain>|/Users/[a-z]+/" ~/.claude/skills/[SkillName]/
 ```
 
 Zero matches = ready. Any match = replace with generic language or move to `SKILLCUSTOMIZATIONS/`.

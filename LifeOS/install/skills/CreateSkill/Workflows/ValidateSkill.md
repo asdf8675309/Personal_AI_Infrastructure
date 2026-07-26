@@ -145,10 +145,13 @@ Common confusable pairs to check: research-style skills (Research vs investigati
 
 ## Step 5a-prelude: Public Release Readiness Check
 
-Every skill ships with the LifeOS public release. Verify the skill is clean of personal/sensitive content:
+Every skill ships with the LifeOS public release. Verify the skill is clean of personal/sensitive content.
+
+Personal identifiers are per-install — substitute your own name, org, products, and
+domains for the placeholders (same pattern as `SKILL.md` § Pre-Flight Grep).
 
 ```bash
-rg -i "danielmiessler|unsupervised|ULAdmin|thesurface|human3|ul\.live|/Users/[a-z]+/" ~/.claude/skills/[SkillName]/
+rg -i "<your-name>|<your-org>|<your-product>|<your-domain>|/Users/[a-z]+/" ~/.claude/skills/[SkillName]/
 ```
 
 **Check for violations:**
