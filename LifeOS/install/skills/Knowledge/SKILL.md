@@ -183,7 +183,7 @@ The weekly gardening workflow. Surface seedling notes that are ready for enrichm
 
 **Step 1 — Find seedlings:**
 ```bash
-rg "^status: seedling" ~/.claude/LIFEOS/MEMORY/KNOWLEDGE/ --type md -l
+rg "^status: seedling" ~/.claude/LIFEOS/MEMORY/KNOWLEDGE/ --type md -l --glob '!_*'
 ```
 
 **Step 2 — For each seedling:**
