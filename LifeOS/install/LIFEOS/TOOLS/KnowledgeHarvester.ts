@@ -24,6 +24,7 @@ for (const __k of ["LIFEOS_DIR", "LIFEOS_CONFIG_DIR", "PROJECTS_DIR"]) {
  *   status               Archive health dashboard
  *   index                Regenerate all MOC dashboards
  *   contradictions       Find note pairs with high tag overlap (candidates for semantic review)
+ *   test                 Run smoke tests
  *
  * Examples:
  *   bun KnowledgeHarvester.ts harvest
@@ -178,6 +179,8 @@ interface HarvestCandidate {
   tags: string[];
   /** Project instance the candidate came from (multi-instance scan, #1170) */
   sourceProject?: string;
+  /** Date the source material itself states, `YYYY-MM-DD`. Absent when the source states none. */
+  sourceDate?: string;
   /** Queue JSON file to remove AFTER the candidate is successfully staged (#1351) */
   queueFile?: string;
 }
@@ -211,6 +214,26 @@ function saveHarvestState(state: HarvestState): void {
 // Source Scanners
 // ============================================================================
 
+function validateSourceDate(value: unknown): string | undefined {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) return undefined;
+  return value;
+}
+
+// `post_date` is the legacy spelling KnowledgeSchema.normalize() already folds into source_date.
+function sourceDateFromFrontmatter(frontmatter: Record<string, unknown>): string | undefined {
+  return validateSourceDate(frontmatter.source_date) ?? validateSourceDate(frontmatter.post_date);
+}
+
+function sourceDateFromResearchFilename(filename: string): string | undefined {
+  return validateSourceDate(filename.match(/^(\d{4}-\d{2}-\d{2})-\d{6}_/)?.[1]);
+}
+
+function sourceDateFromWorkDirName(dirName: string): string | undefined {
+  return validateSourceDate(dirName.match(/^(\d{4})(\d{2})(\d{2})-\d{6}_/)?.slice(1, 4).join("-"));
+}
+
 function scanAutoMemory(state: HarvestState): HarvestCandidate[] {
   const candidates: HarvestCandidate[] = [];
 
@@ -242,6 +265,7 @@ function scanAutoMemory(state: HarvestState): HarvestCandidate[] {
         type,
         tags: extractTags(content),
         sourceProject: project,
+        sourceDate: sourceDateFromFrontmatter(frontmatter),
       });
     }
   }
@@ -304,6 +328,7 @@ function scanWorkRoot(workRoot: string, project: string | null, state: HarvestSt
             type: "idea",
             tags: extractTags(content),
             sourceProject: project ?? undefined,
+            sourceDate: sourceDateFromFrontmatter(frontmatter) ?? sourceDateFromWorkDirName(dir),
           });
         }
       }
@@ -328,6 +353,7 @@ function scanWorkRoot(workRoot: string, project: string | null, state: HarvestSt
       type: "idea",
       tags: extractTags(content),
       sourceProject: project ?? undefined,
+      sourceDate: sourceDateFromFrontmatter(frontmatter) ?? sourceDateFromWorkDirName(dir),
     });
   }
   return candidates;
@@ -370,6 +396,7 @@ function scanResearch(state: HarvestState): HarvestCandidate[] {
         domain,
         type,
         tags: extractTags(content),
+        sourceDate: sourceDateFromResearchFilename(entry.name),
       });
     }
   }
@@ -574,10 +601,18 @@ function stageNote(candidate: HarvestCandidate): string {
   if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
 
   const today = new Date().toISOString().split("T")[0];
+  const note = renderStagedNote(candidate, today);
+
+  fs.writeFileSync(targetPath, note);
+  return targetPath;
+}
+
+function renderStagedNote(candidate: HarvestCandidate, today: string): string {
   const tagsStr = candidate.tags.map(t => `${t}`).join(", ");
   const projectLine = candidate.sourceProject ? `\nsource_project: ${candidate.sourceProject}` : "";
+  const sourceDateLine = candidate.sourceDate ? `\nsource_date: ${candidate.sourceDate}` : "";
 
-  const note = `---
+  return `---
 title: "${candidate.title.replace(/"/g, '\\"')}"
 type: ${candidate.type}
 domain: ${candidate.domain.toLowerCase()}
@@ -586,16 +621,13 @@ created: ${today}
 updated: ${today}
 quality: 5
 status: pending-review
-harvested_from: ${candidate.sourcePath}${projectLine}
+harvested_from: ${candidate.sourcePath}${projectLine}${sourceDateLine}
 ---
 
 # ${candidate.title}
 
 ${candidate.content}
 `;
-
-  fs.writeFileSync(targetPath, note);
-  return targetPath;
 }
 
 interface StagedNote {
@@ -1258,6 +1290,72 @@ function cmdIndex(): void {
   console.log("\n  ✅ Done.");
 }
 
+function smokeTest(): number {
+  let pass = 0, fail = 0;
+  const check = (name: string, ok: boolean, detail?: string) => {
+    if (ok) { pass++; console.log(`  ✓ ${name}${detail ? ` — ${detail}` : ""}`); }
+    else { fail++; console.error(`  ✗ ${name}${detail ? ` — ${detail}` : ""}`); }
+  };
+
+  check("validator: accepts valid date", validateSourceDate("2026-04-28") === "2026-04-28");
+
+  const rejected: unknown[] = [
+    "",
+    "not-a-date",
+    "2026-4-8",
+    "2026-13-01",
+    "2026-02-31",
+    "2026-04-28T10:00:00Z",
+    undefined,
+    20260428,
+  ];
+  for (const value of rejected) {
+    check(`validator: rejects ${JSON.stringify(value) ?? "undefined"}`, validateSourceDate(value) === undefined);
+  }
+
+  const researchDate = sourceDateFromResearchFilename("2026-04-28-153000_some-topic.md");
+  check("research filename: derives exact date", researchDate === "2026-04-28");
+  check("research filename: no prefix stays absent", sourceDateFromResearchFilename("some-topic.md") === undefined);
+
+  check("frontmatter: source_date takes precedence", sourceDateFromFrontmatter({
+    source_date: "2026-04-28",
+    post_date: "2026-04-27",
+    created: "2026-04-29",
+  }) === "2026-04-28");
+  check("frontmatter: post_date is the fallback", sourceDateFromFrontmatter({ post_date: "2026-04-27" }) === "2026-04-27");
+  check("frontmatter: valid post_date survives invalid source_date", sourceDateFromFrontmatter({
+    source_date: "not-a-date",
+    post_date: "2026-04-27",
+  }) === "2026-04-27");
+  check("frontmatter: created is not a source date", sourceDateFromFrontmatter({ created: "2026-04-29" }) === undefined);
+
+  check("work dir: derives exact date", sourceDateFromWorkDirName("20260428-153000_some-task") === "2026-04-28");
+  check("work dir: no timestamp prefix stays absent", sourceDateFromWorkDirName("some-task") === undefined);
+  check("work dir: impossible calendar date rejected", sourceDateFromWorkDirName("20260231-153000_some-task") === undefined);
+
+  const candidate: HarvestCandidate = {
+    sourcePath: "RESEARCH/2026-04-28-153000_some-topic.md",
+    title: "some topic",
+    content: "Source material.",
+    domain: "Ideas",
+    type: "idea",
+    tags: ["research"],
+    sourceDate: "2026-04-28",
+  };
+  const rendered = renderStagedNote(candidate, "2026-05-01");
+  check("render: emits exact source_date value", rendered.split("\n").includes("source_date: 2026-04-28"));
+  check("render: supplied archive date is preserved", rendered.split("\n").includes("created: 2026-05-01"));
+
+  const withoutSourceDate = renderStagedNote({ ...candidate, sourceDate: undefined }, "2026-05-01");
+  check("render: absent source_date emits no substring", !withoutSourceDate.includes("source_date"));
+
+  const derivedRender = renderStagedNote({ ...candidate, sourceDate: researchDate }, "2026-05-01");
+  check("research filename: derived value reaches rendered note", derivedRender.split("\n").includes("source_date: 2026-04-28"));
+
+  console.log(`\n${pass} passed, ${fail} failed`);
+  return fail === 0 ? 0 : 1;
+}
+
 // ============================================================================
 // CLI Entry Point
 // ============================================================================
@@ -1295,6 +1393,7 @@ Commands:
   status               Archive health dashboard
   index                Regenerate all MOC dashboards
   contradictions       Find note pairs with high tag overlap for semantic review
+  test                 Run smoke tests
 
 Env:
   LIFEOS_AUTO_MEMORY_DIR   Colon-separated memory dirs to scan (default: all
@@ -1336,6 +1435,9 @@ switch (command) {
     break;
   case "contradictions":
     cmdContradictions();
+    break;
+  case "test":
+    process.exit(smokeTest());
     break;
   default:
     console.error(`Unknown command: ${command}. Use --help for usage.`);
