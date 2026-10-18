@@ -16,7 +16,7 @@
  *   import { parseTranscript, getLastAssistantMessage } from './TranscriptParser'
  */
 
-import { readFileSync } from 'fs';
+import { closeSync, fstatSync, openSync, readFileSync, readSync } from 'fs';
 import { getIdentity } from '../../hooks/lib/identity';
 
 const DA_IDENTITY = getIdentity();
@@ -359,13 +359,38 @@ export function detectResponseState(lastMessage: string, transcriptContent: stri
 // Unified Parser
 // ============================================================================
 
+// Stop hooks run parseTranscript on every turn end, several at once. Reading the
+// whole file let a day-long session's transcript (hundreds of MB), held by three
+// Stop hooks at once, push memory past 30 GB: each hook kept the text and
+// JSON-parsed every line twice. Everything the parser returns comes from the
+// current turn, which sits at the end of the file.
+const TRANSCRIPT_TAIL_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Read the last `tailBytes` of a transcript, dropping the partial first line.
+ * Files no larger than `tailBytes` are read whole.
+ */
+export function readTranscriptTail(transcriptPath: string, tailBytes = TRANSCRIPT_TAIL_BYTES): string {
+  const fd = openSync(transcriptPath, 'r');
+  try {
+    const size = fstatSync(fd).size;
+    if (size <= tailBytes) return readFileSync(fd, 'utf-8');
+    const buf = Buffer.alloc(tailBytes);
+    readSync(fd, buf, 0, tailBytes, size - tailBytes);
+    const text = buf.toString('utf-8');
+    return text.slice(text.indexOf('\n') + 1);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /**
  * Parse transcript and extract all relevant data in one pass.
  * This is the main function for the orchestrator pattern.
  */
 export function parseTranscript(transcriptPath: string): ParsedTranscript {
   try {
-    const raw = readFileSync(transcriptPath, 'utf-8');
+    const raw = readTranscriptTail(transcriptPath);
     const lastMessage = parseLastAssistantMessage(raw);
     // Collect assistant text from CURRENT response turn only.
     // This prevents stale voice lines from previous turns being read

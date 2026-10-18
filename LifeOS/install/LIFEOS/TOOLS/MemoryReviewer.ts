@@ -30,6 +30,7 @@
  *   bun MemoryReviewer.ts test --live                (real inference smoke — costs subscription)
  */
 
+import { readTranscriptTail } from "./TranscriptParser";
 import {
   appendFileSync,
   existsSync,
@@ -153,7 +154,9 @@ export function transcriptCaptureEnvelope(transcriptPath: string, ts: string, co
 export function extractRecentExchanges(transcriptPath: string, maxExchanges: number): Exchange[] {
   if (!existsSync(transcriptPath)) return [];
 
-  const lines = readFileSync(transcriptPath, "utf8").split("\n").filter((l) => l.trim().length > 0);
+  // Only the last maxExchanges are kept, so the tail is enough; a full read of a
+  // day-long transcript (hundreds of MB) cost gigabytes in this detached process.
+  const lines = readTranscriptTail(transcriptPath, 32 * 1024 * 1024).split("\n").filter((l) => l.trim().length > 0);
   const events: Array<{ ts: string; role: string; text: string }> = [];
 
   for (const line of lines) {
